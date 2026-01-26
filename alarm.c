@@ -15,6 +15,8 @@ int main (int argc, char *argv[])
 
     while (1) {
         printf ("Alarm> ");
+
+        // Prevents BufferOverFlow by making sure by limiting the input to the size specified by n 
         if (fgets (line, sizeof (line), stdin) == NULL) exit (0);
         if (strlen (line) <= 1) continue;
 
