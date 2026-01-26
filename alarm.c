@@ -22,6 +22,7 @@ int main (int argc, char *argv[])
          * Parse input line into seconds (%d) and a message
          * (%64[^\n]), consisting of up to 64 characters
          * separated from the seconds by whitespace.
+         * Format: int sscanf(const char *buffer, const char *format, ...);
          */
         if (sscanf (line, "%d %64[^\n]", 
             &seconds, message) < 2) {
