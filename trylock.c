@@ -54,6 +54,26 @@ void *counter_thread (void *arg) {
     if (status !=0)
       err_abort (status, "Unlock mutex");
 
+    /*
+     * EXPERIMENT: Try commenting out this sleep(1) to see the effect
+     * on lock contention!
+     * 
+     * With sleep(1):
+     *   - Counter holds lock for ~10ms (counting)
+     *   - Counter releases lock for ~1000ms (sleeping)
+     *   - Monitor has ~99% chance of getting the lock
+     *   - Expected result: 0 misses
+     * 
+     * Without sleep(1):
+     *   - Counter holds lock for ~10ms (counting)
+     *   - Counter immediately locks again (microsecond gap)
+     *   - Monitor has ~1% chance of getting the lock
+     *   - Expected result: 15-20 misses (most or all checks fail)
+     *   - Counter thread finishes in ~10 seconds instead of 60
+     * 
+     * This demonstrates how critical it is to design your threads
+     * to give fair access to shared resources!
+     */
     sleep (1);
   }
 
@@ -80,7 +100,7 @@ void *monitor_thread (void *arg) {
   */
   while (time (NULL) < end_time) {
     sleep (3);
-    status = pthread_mutex_lock (&mutex);
+    status = pthread_mutex_trylock (&mutex);
 
     if (status != EBUSY) {
       if (status != 0)
