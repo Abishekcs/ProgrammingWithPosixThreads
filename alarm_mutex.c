@@ -12,9 +12,11 @@
 
 */
 
+#define DEBUG 1
+
 #include <pthread.h>
 #include <time.h>
-#include "errros.h"
+#include "errors.h"
 
 /*
 
@@ -68,6 +70,47 @@ void *alarm_thread (void *arg) {
       the sleep_time to 0.
 
     */
+    if (alarm == NULL)
+      sleep_time = 1;
+    else {
+      alarm_list = alarm->link;
+      now = time (NULL);
+
+      if (alarm->time <= now)
+        sleep_time = 0;
+      else {
+        sleep_time = alarm->time - now;
+
+        #ifdef DEBUG
+          printf("[waiting: %d(%d)\"%s\"]\n", alarm->time, sleep_time, alarm->message);
+        #endif
+      }
+    }
+
+    /*
+    
+      Unlock the mutex before waiting, so that the main 
+      thread can lock it to insert a new alarm request.
+      If the sleep_time is 0, then call sched_yield, giving
+      the main thread a chance to run if it has been readied
+      by user input, without delaying the message if there's
+      no input.
+
+    */
+    status = pthread_mutex_unlock (&alarm_mutex);
+    if (status !=0)
+      err_abort (status, "Unlock mutex");
+    if (sleep_time > 0)
+      sleep (sleep_time);
+    else
+      sched_yield ();
+
+  
+    // If a timer expired, print the message and free the structure
+    if (alarm != NULL) {
+      printf("(%d) %s\n", alarm->seconds, alarm->message);
+      free(alarm);
+    } 
   }
 }
 
@@ -86,7 +129,7 @@ int main (int argc, char *argv[]) {
   while (1) {
     printf("alarm> ");
     
-    if(fgets (line, sizeof(line), stdin == NULL)) exit(0);
+    if(fgets (line, sizeof(line), stdin) == NULL) exit(0);
     if (strlen(line) <= 1) continue;
 
     alarm = (alarm_t*)malloc(sizeof(alarm_t));
@@ -101,7 +144,7 @@ int main (int argc, char *argv[]) {
       separated from the seconds by whitespace.
 
     */
-    if (scanf(line, "%d %64[^\n]", &alarm->seconds, alarm->message) < 2) {
+    if (sscanf(line, "%d %64[^\n]", &alarm->seconds, alarm->message) < 2) {
 
       fprintf(stderr, "Bad Command\n");
       free(alarm);
@@ -109,6 +152,60 @@ int main (int argc, char *argv[]) {
     } else {
       
       status = pthread_mutex_lock (&alarm_mutex);
+
+      if (status != 0)
+        err_abort (status, "Lock mutex");
+
+      alarm->time = time (NULL) + alarm->seconds;
+
+      /*
+        
+        Insert the new alarm into the list of alarms,
+        sorted by expiration time.
+      
+      */
+      last = &alarm_list;
+      next = *last;
+      while (next != NULL) {
+      
+        if (next->time >= alarm->time) {
+          alarm->link = next;
+          *last = alarm;
+          break;
+        }
+        
+        last = &next->link;
+        next = next->link;
+      }
+
+      /*
+        
+        If we reached the end of this list, insert the new
+        alarm there. ("next" is NULL, and "last" points to 
+        the link field of the last item, or the list header).
+
+      */
+      
+      if (next == NULL) {
+        *last = alarm;
+        alarm->link = NULL;
+      }
+
+      #ifdef DEBUG
+        
+        printf("[list: ");
+        
+        for (next = alarm_list; next != NULL; next = next->link)
+          printf("%d(%d)[\"%s\"] ", next->time, next->time - time (NULL), next->message);
+
+        printf("]\n");
+      
+      #endif
+
+      status = pthread_mutex_unlock (&alarm_mutex);
+
+      if (status != 0)
+        err_abort (status, "Unlock mutex");
 
     }
   } 
