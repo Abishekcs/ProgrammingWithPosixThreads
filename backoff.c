@@ -29,15 +29,11 @@ void *lock_forward(void *arg) {
     backoffs = 0;
     
     for (i = 0; i < 3; i++) {
-      
       if (i == 0) {
-      
         status = pthread_mutex_lock (&mutex[i]);
         if (status != 0)
-          error_abort (status, "First lock");
-      
+          err_abort (status, "First lock");
       } else {
-          
           if (backoff)
             status = pthread_mutex_trylock (&mutex[i]);
           else
@@ -55,17 +51,17 @@ void *lock_forward(void *arg) {
             for (i--; i>= 0; i--) {
               status = pthread_mutex_unlock(&mutex[i]);
               if (status != 0)
-                error_abort (status, "Backoff");
+                err_abort (status, "Backoff");
             }
-        } else {
-            if (status !=0)
-              err_abort (status, "Lock mutex");
-            DPRINTF (("forward locker got %d\n", i));
-        }
+          } else {
+              if (status !=0)
+                err_abort (status, "Lock mutex");
+              DPRINTF (("forward locker got %d\n", i));
+          }
       }
 
       // Yiled processorm if needed to be sure locks get interleaved on a uniprocessor
-      if (yeild_flag) {
+      if (yield_flag) {
         if (yield_flag > 0)
           sched_yield ();
         else
@@ -78,6 +74,102 @@ void *lock_forward(void *arg) {
     pthread_mutex_unlock (&mutex[1]);
     pthread_mutex_unlock (&mutex[0]);
   }
-  return NULL:
+  return NULL;
 } 
+
+/*
+  This is a thread start routine that locks all mutexes in
+  reverse order, to ensure a conflict with lock_forward, which
+  does the opposite
+*/
+
+void *lock_backward (void *arg) {
+  int i, iterate, backoffs;
+  int status;
+
+  for (iterate = 0; iterate < ITERATIONS; iterate++) {
+    backoffs = 0;
+    for (i = 2; i >= 0; i--) {
+      if (i == 2) {
+        status = pthread_mutex_lock (&mutex[i]);
+        if (status !=0)
+          err_abort (status, "First lock");
+      } else {
+          if (backoff)
+            status = pthread_mutex_trylock(&mutex[i]);
+          else
+            status = pthread_mutex_lock (&mutex[i]);
+          if (status == EBUSY) {
+            backoffs++;
+            DPRINTF((" [backward locker backing off at %d]\n ", i));
+            /*
+              Unlock for the PREVIOUS mutex (the last one we locked)
+              back to the first. (The order isn't important,  but 
+              unlocking in reverse order seems cleare.)
+            */
+            for (i++; i < 3; i++) {
+              status = pthread_mutex_unlock (&mutex[i]);
+              if (status != 0)
+                err_abort (status, "Backoff");
+            }
+          } else {
+              if (status !=0)
+                err_abort (status, "Lock mutex");
+              DPRINTF((" backward locker got %d\n", i));
+          }
+        }
+      // Yield processor, if needed to be sure locks get interleaved
+      // on a uniprocessor
+      if (yield_flag) {
+        if (yield_flag >0) 
+          sched_yield ();
+        else
+          sleep (1);
+      }
+    }
+    // Report that we got all the mutexes and unlock to try again
+    printf("lock backward got all locks, %d backoffs\n", backoffs);
+    pthread_mutex_unlock (&mutex[0]);
+    pthread_mutex_unlock (&mutex[1]);
+    pthread_mutex_unlock (&mutex[2]);
+  }
+  return NULL;
+}
+
+int main (int argc, char *argv[]) {
+  pthread_t forward, backward;
+  int status;
+
+  /*
+    If the first argument is absent, or nonzero, a backoff
+    algorithm will be used to avoid deadlock. If the first
+    argument is zero, the program will deadlock on a lock
+    collision
+  */
+  if (argc > 1)
+    backoff = atoi (argv[1]);
+
+  /*
+    If the second argument is absent, or zero, the two
+    threads run "at speed." On some systems, especially
+    uniprocessor, one thread may complete before the other
+    has a chance to run, and you won't see a deadlock or 
+    backoffs. In that case, try running with the argument set
+    to positive number to cause the threads to call 
+    sched_yield() at each lock; or, to make it even more 
+    obvious, set to a negative number to cause the threads to
+    call sleep(1) instead.
+  */
+  if (argc > 2)
+    yield_flag = atoi (argv[2]);
+  status = pthread_create (&forward, NULL, lock_forward, NULL);
+  if (status != 0)
+    err_abort (status, "Create forward");
+  status = pthread_create (&backward, NULL, lock_backward, NULL);
+  if (status != 0)
+    err_abort(status, "Create backward");
+  pthread_exit (NULL);
+}
+
+
 
